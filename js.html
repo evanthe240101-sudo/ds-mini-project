@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Network Reliability Checker — Cut Vertices & Biconnected Components</title>
+  <style>
+    /* Simple, modern styling */
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#9aa4b2;--glass:rgba(255,255,255,0.03)}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071226 0%, #071a2a 100%);font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
+    .wrap{max-width:980px;margin:28px auto;padding:24px;border-radius:14px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    header{display:flex;align-items:center;gap:16px}
+    h1{color:#e6f7fb;margin:0;font-size:20px}
+    p.lead{color:var(--muted);margin:6px 0 18px;font-size:13px}
+
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
+    .card{background:var(--card);padding:16px;border-radius:12px;border:1px solid rgba(255,255,255,0.03)}
+
+    label{display:block;color:var(--muted);font-size:13px;margin-bottom:8px}
+    textarea{width:100%;min-height:160px;background:var(--glass);color:#e6f7fb;border:1px dashed rgba(255,255,255,0.03);padding:12px;border-radius:8px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;font-size:13px}
+    input[type=file]{color:var(--muted)}
+
+    .controls{display:flex;gap:8px;margin-top:12px}
+    button{background:linear-gradient(180deg,var(--accent),#0891b2);border:none;color:#042027;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+
+    .output{white-space:pre-wrap;color:#dff7f9;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);min-height:60px}
+    .small{font-size:12px;color:var(--muted)}
+
+    /* Responsive */
+    @media (max-width:900px){
+      .grid{grid-template-columns:1fr;}
+      .card{padding:12px}
+    }
+
+    footer{margin-top:16px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Network Reliability Checker</h1>
+    </header>
+    <p class="lead">Paste an undirected graph (edge list) or upload a file. The page computes <strong>articulation points (cut vertices)</strong> and <strong>vertex-biconnected components</strong> using a Tarjan-like algorithm implemented in JavaScript.</p>
+
+    <div class="grid">
+      <div class="card">
+        <label for="edgelist">Edge list (first line optional: "n m"). Each edge per line: <code>u v</code></label>
+        <textarea id="edgelist" placeholder="Example:\n7 8\n1 2\n1 3\n2 3\n2 4\n4 5\n5 6\n6 4\n6 7"></textarea>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+          <input id="fileInput" type="file" accept=".txt" />
+          <div class="controls" style="margin-left:auto">
+            <button id="demoBtn" class="ghost">Load Demo</button>
+            <button id="runBtn">Run</button>
+            <button id="clearBtn" class="ghost">Clear</button>
+          </div>
+        </div>
+
+        <hr style="border:none;height:1px;background:rgba(255,255,255,0.03);margin:14px 0">
+        <div>
+          <div class="small">Articulation points (cut vertices):</div>
+          <div id="apOut" class="output"></div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="small">Biconnected components (vertex sets):</div>
+          <div id="bccOut" class="output"></div>
+        </div>
+
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 8px 0;color:#e6f7fb">Quick notes</h3>
+        <p class="small">• The algorithm assumes vertices are labeled by integers (1..n). If you don't provide n, the program infers the maximum vertex number.
+        <br>• The implementation is Tarjan-like and runs in O(n + m) time.</p>
+
+        <hr style="border:none;height:1px;background:rgba(255,255,255,0.03);margin:14px 0">
+        <h4 style="margin:0 0 6px 0;color:#e6f7fb">Sample input</h4>
+        <pre class="small" style="background:transparent;margin:0;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.02)">7 8
+1 2
+1 3
+2 3
+2 4
+4 5
+5 6
+6 4
+6 7</pre>
+
+        <hr style="border:none;height:1px;background:rgba(255,255,255,0.03);margin:14px 0">
+        <h4 style="margin:0 0 6px 0;color:#e6f7fb">How to use</h4>
+        <ol class="small">
+          <li>Paste or upload an edge-list file (first line may contain <code>n m</code>).</li>
+          <li>Click <strong>Run</strong> to compute articulation points and BCCs.</li>
+          <li>Use <strong>Load Demo</strong> to fill the sample graph.</li>
+        </ol>
+      </div>
+    </div>
+
+    <footer>Want visualization (NetworkX-style), downloadable report, or export to JSON? Tell me and I'll add it.</footer>
+  </div>
+
+  <script>
+    // Parse input into adjacency list (1-based integer vertices)
+    function parseEdgeList(text){
+      const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      if(lines.length === 0) return {n:0, edges:[]};
+      let idx = 0;
+      let n = null, m = null;
+      const firstParts = lines[0].split(/\s+/);
+      let startLine = 0;
+      if(firstParts.length >= 2 && /^\d+$/.test(firstParts[0]) && /^\d+$/.test(firstParts[1])){
+        n = parseInt(firstParts[0],10);
+        m = parseInt(firstParts[1],10);
+        startLine = 1;
+      }
+      const edges = [];
+      for(let i=startLine;i<lines.length;i++){
+        const p = lines[i].split(/\s+/).filter(Boolean);
+        if(p.length<2) continue;
+        const u = parseInt(p[0],10), v = parseInt(p[1],10);
+        if(Number.isFinite(u) && Number.isFinite(v)) edges.push([u,v]);
+      }
+      if(n === null){
+        let maxv = 0;
+        for(const e of edges){ maxv = Math.max(maxv, e[0], e[1]); }
+        n = maxv;
+      }
+      return {n:n, edges:edges};
+    }
+
+    // Build adjacency list
+    function buildGraph(n, edges){
+      const adj = Array.from({length:n+1}, ()=>[]);
+      for(const [u,v] of edges){
+        if(!adj[u].includes(v)) adj[u].push(v);
+        if(!adj[v].includes(u)) adj[v].push(u);
+      }
+      return adj;
+    }
+
+    // Tarjan-like algorithm for articulation points and vertex-biconnected components
+    function findAPandBCC(adj){
+      const n = adj.length - 1;
+      const disc = new Array(n+1).fill(0);
+      const low = new Array(n+1).fill(0);
+      let time = 0;
+      const st = []; // edge stack
+      const aps = new Set();
+      const bccs = [];
+
+      function dfs(u, parent){
+        time++;
+        disc[u] = low[u] = time;
+        let children = 0;
+        for(const v of adj[u]){
+          if(disc[v] === 0){
+            children++;
+            st.push([u,v]);
+            dfs(v, u);
+            low[u] = Math.min(low[u], low[v]);
+
+            if(parent === null && children > 1) aps.add(u);
+            if(parent !== null && low[v] >= disc[u]) aps.add(u);
+
+            if(low[v] >= disc[u]){
+              const compSet = new Set();
+              while(st.length){
+                const e = st.pop();
+                compSet.add(e[0]); compSet.add(e[1]);
+                if((e[0]===u && e[1]===v) || (e[0]===v && e[1]===u)) break;
+              }
+              bccs.push(Array.from(compSet));
+            }
+
+          } else if(v !== parent && disc[v] < disc[u]){
+            low[u] = Math.min(low[u], disc[v]);
+            st.push([u,v]);
+          }
+        }
+      }
+
+      for(let u=1;u<=n;u++){
+        if(disc[u]===0){
+          dfs(u, null);
+          if(st.length){
+            const compSet = new Set();
+            while(st.length){ const e = st.pop(); compSet.add(e[0]); compSet.add(e[1]); }
+            if(compSet.size>0) bccs.push(Array.from(compSet));
+          }
+        }
+      }
+      return {aps:Array.from(aps).sort((a,b)=>a-b), bccs};
+    }
+
+    // UI hooks
+    const ed = document.getElementById('edgelist');
+    const runBtn = document.getElementById('runBtn');
+    const demoBtn = document.getElementById('demoBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const fileInput = document.getElementById('fileInput');
+    const apOut = document.getElementById('apOut');
+    const bccOut = document.getElementById('bccOut');
+
+    demoBtn.addEventListener('click', ()=>{
+      ed.value = '7 8\n1 2\n1 3\n2 3\n2 4\n4 5\n5 6\n6 4\n6 7';
+    });
+
+    clearBtn.addEventListener('click', ()=>{ ed.value=''; apOut.textContent=''; bccOut.textContent=''; fileInput.value=''; });
+
+    fileInput.addEventListener('change', (ev)=>{
+      const f = ev.target.files[0];
+      if(!f) return;
+      const reader = new FileReader();
+      reader.onload = (e)=>{ ed.value = e.target.result; };
+      reader.readAsText(f);
+    });
+
+    runBtn.addEventListener('click', ()=>{
+      apOut.textContent = 'Computing...'; bccOut.textContent = '';
+      try{
+        const parsed = parseEdgeList(ed.value);
+        if(parsed.n === 0){ apOut.textContent='(empty graph)'; return; }
+        const adj = buildGraph(parsed.n, parsed.edges);
+        const res = findAPandBCC(adj);
+        apOut.textContent = res.aps.length? res.aps.join(', ') : 'None';
+        if(res.bccs.length){
+          bccOut.textContent = res.bccs.map((c,i)=>`BCC ${i+1}: { ${c.join(', ')} }`).join('\n');
+        } else bccOut.textContent = 'None';
+      }catch(err){ apOut.textContent='Error: '+err.message; bccOut.textContent=''; }
+    });
+
+    // Run on demo at load for convenience
+    // demoBtn.click();
+  </script>
+</body>
+</html>
